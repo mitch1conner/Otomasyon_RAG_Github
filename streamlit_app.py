@@ -30,7 +30,7 @@ if not api_key:
     st.info("Devam etmek için Streamlit Secrets ayarına GEMINI_API_KEY ekleyin veya sol menüden girin.")
     st.stop()
 
-client = genai.Client(api_key=api_key)
+client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
 model_name = "gemini-3.1-pro-preview"
 
 # 3. Dosya Yükleme (PDF, CSV, TXT)
