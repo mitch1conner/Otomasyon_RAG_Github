@@ -31,7 +31,7 @@ if not api_key:
     st.stop()
 
 client = genai.Client(api_key=api_key)
-model_name = "gemini-2.5-pro"
+model_name = "gemini-3.1-pro-preview"
 
 # 3. Dosya Yükleme (PDF, CSV, TXT)
 uploaded_file = st.sidebar.file_uploader(
