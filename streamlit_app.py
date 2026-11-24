@@ -6,9 +6,9 @@ from google import genai
 from google.genai import types
 
 st.set_page_config(page_title="3. Asitleme RCA Ajanı", layout="wide")
-st.title("🔧 3. Asitleme Kök Neden Analizi (RCA) Chatbotu")
+st.title("🔧 Otomasyon Kök Neden Analizi (RCA) Chatbotu")
 
-# 1. YAML Profilini Yükle
+# 1. YAML 
 @st.cache_data
 def load_profile_text(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
