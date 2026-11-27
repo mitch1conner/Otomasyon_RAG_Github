@@ -209,8 +209,7 @@ KESİN TALİMAT — SADECE MOD B (SAHA ARIZA ÇÖZÜM MODU) ÇALIŞTIR:
     if feedback_context:
         final_instruction += "\n\n---\n" + feedback_context
     final_instruction += "\n\n---\nREFERANS PROFİL:\n" + system_instruction_text
-
- contents = [user_payload]
+    contents = [user_payload]
     if "remote_file" in st.session_state:
         contents.append(st.session_state.remote_file)
 
