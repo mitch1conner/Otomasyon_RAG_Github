@@ -5,20 +5,21 @@ import yaml
 import streamlit as st
 from google import genai
 from google.genai import types
-
+# Sayfaya ait özellikler
 st.set_page_config(page_title="Otomasyon RAG Chatbot", layout="wide")
 st.title("🔧 Otomasyon Kök Neden Analizi (RCA) Chatbotu")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FEEDBACK_FILE = os.path.join(BASE_DIR, "feedback_scores.json")
-
-
+UPLOAD_DIR = os.path.join(BASE_DIR, "saved_docs")
+META_FILE = os.path.join(UPLOAD_DIR, "active_file_meta.json")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 # 1. YAML veya MD Profilini Otomatik Bul ve Yükle
 @st.cache_data
 def load_profile_text(preferred_name):
     files_in_dir = os.listdir(BASE_DIR)
 
-    # 1) Tam eşleşme veya baş/son boşluklu eşleşme
+    # 1) Tam eşleşme
     for fname in files_in_dir:
         if fname.strip() == preferred_name.strip():
             target = os.path.join(BASE_DIR, fname)
@@ -80,7 +81,7 @@ def add_positive_feedback(query_text: str, answer_text: str):
     data.append({
         "query": query_text.strip(),
         "answer": summary,
-        "score": 1
+        "score": 1,
     })
     save_feedback_data(data)
     return 1
@@ -95,14 +96,15 @@ def build_feedback_priority_context(top_k: int = 5) -> str:
     ranked = sorted(data, key=lambda x: x.get("score", 0), reverse=True)[:top_k]
     lines = [
         "SAHADA DOĞRULANMIŞ YÜKSEK ÖNCELİKLİ ÇÖZÜMLER (Geri Bildirim Skoruna Göre):",
-        "Kullanıcının sorduğu arıza aşağıdakilerle eşleşiyorsa, en yüksek (+1) skora sahip çözümü en üstte önceliklendir:"
+        "Kullanıcının sorduğu arıza aşağıdakilerle eşleşiyorsa, en yüksek (+1) skora sahip çözümü en üstte önceliklendir:",
     ]
     for i, item in enumerate(ranked, start=1):
-        lines.append(f"\n{i}) [Doğrulama Skoru: +{item['score']}] Arıza: {item['query']}\nOnaylı Çözüm Özeti:\n{item['answer']}")
+        lines.append(
+            f"\n{i}) [Doğrulama Skoru: +{item['score']}] Arıza: {item['query']}\n"
+            f"Onaylı Çözüm Özeti:\n{item['answer']}"
+        )
     return "\n".join(lines)
-
-
-# 2. API Anahtarını Önce Secrets'tan Al, Yoksa Yan Menüden İste
+    # 2. API Anahtarını Önce Secrets'tan Al, Yoksa Yan Menüden İste
 api_key = None
 try:
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -119,41 +121,79 @@ if not api_key:
 client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
 
 
-# 3. Hesabın Erişebildiği Modelleri Listele
+# 3. Yalnızca Aktif ve Hizmet Veren Gemini Modellerini Listele
+DEPRECATED_OR_NON_CHAT_KEYWORDS = (
+    "gemini-1.0",
+    "gemini-1.5",
+    "gemini-2.0",
+    "gemini-pro-vision",
+    "gemini-ultra",
+    "embedding",
+    "aqa",
+    "imagen",
+    "veo",
+    "tts",
+    "audio",
+    "image",
+    "live",
+    "robotics",
+    "computer-use",
+    "deep-research",
+    "vision",
+    "-exp",
+    "-001",
+    "-002",
+    "tuning",
+    "learnlm",
+    "gemma",
+)
+
+ACTIVE_FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash-lite",
+]
+
+
 @st.cache_data(ttl=3600)
 def get_available_models(_client):
     try:
         models = []
         for m in _client.models.list():
             name = m.name.replace("models/", "")
+            low = name.lower()
             actions = getattr(m, "supported_actions", None) or []
-            if "gemini" in name.lower() and (not actions or "generateContent" in actions):
-                models.append(name)
+
+            if not low.startswith("gemini-"):
+                continue
+            if actions and "generateContent" not in actions:
+                continue
+            if low in ("gemini-pro", "gemini-flash"):
+                continue
+            if any(bad in low for bad in DEPRECATED_OR_NON_CHAT_KEYWORDS):
+                continue
+
+            models.append(name)
+
         if models:
+            # Kararlı 2.5 ve güncel sürümleri üstte sırala
+            priority = {m: idx for idx, m in enumerate(ACTIVE_FALLBACK_MODELS)}
+            models = sorted(
+                list(dict.fromkeys(models)),
+                key=lambda x: (priority.get(x, 99), "preview" in x.lower(), x),
+            )
             return models
     except Exception:
         pass
-    return ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.1-pro-preview"]
+    return ACTIVE_FALLBACK_MODELS
 
 
 available_models = get_available_models(client)
-default_idx = 0
-if "gemini-2.5-flash" in available_models:
-    default_idx = available_models.index("gemini-2.5-flash")
-else:
-    for i, m in enumerate(available_models):
-        if "flash" in m.lower():
-            default_idx = i
-            break
-
+default_idx = available_models.index("gemini-2.5-flash") if "gemini-2.5-flash" in available_models else 0
 model_name = st.sidebar.selectbox("Model Seçin", available_models, index=default_idx)
 
+
 # 4. Kalıcı Dosya Yönetimi (Tek Sefer Yükle, İstenince Sil)
-UPLOAD_DIR = os.path.join(BASE_DIR, "saved_docs")
-META_FILE = os.path.join(UPLOAD_DIR, "active_file_meta.json")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-
 def get_saved_file_meta():
     if os.path.exists(META_FILE):
         try:
@@ -180,7 +220,6 @@ def ensure_gemini_file_ready(_client, meta):
         except Exception:
             pass
 
-    # Süresi dolmuşsa veya bulunamadıysa yerel kopyadan sessizce yeniden yükle
     remote_obj = _client.files.upload(file=meta["local_path"])
     meta["gemini_name"] = remote_obj.name
     save_file_meta(meta)
@@ -207,7 +246,6 @@ st.sidebar.subheader("📁 Aktif Bakım Raporu")
 active_meta = get_saved_file_meta()
 
 if active_meta:
-    # Sayfa yenilendiyse session_state'i otomatik geri yükle
     if "remote_file" not in st.session_state or st.session_state.get("uploaded_file_name") != active_meta["file_name"]:
         with st.spinner("Kayıtlı rapor bağlanıyor..."):
             try:
@@ -223,7 +261,7 @@ if active_meta:
 else:
     uploaded_file = st.sidebar.file_uploader(
         "Analiz Edilecek Raporu Yükleyin (PDF, CSV, TXT)",
-        type=["pdf", "csv", "txt"]
+        type=["pdf", "csv", "txt"],
     )
     if uploaded_file:
         local_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
@@ -245,10 +283,7 @@ else:
                 st.sidebar.error(f"Dosya yükleme hatası: {e}")
                 if os.path.exists(local_path):
                     os.remove(local_path)
-
-# 5. Çalışma Modu Seçici (Varsayılan: Sadece Sorulan Arızanın Çözümü)
-# 5. Çalışma Modu Seçici (Açık Mod Etiketleri ve Dinamik Açıklama)
-# 5. Çalışma Modu Seçici (Açık Mod Etiketleri ve Dinamik Placeholder)
+# 5. Çalışma Modu Seçici ve !help Metni
 calisma_modu = st.sidebar.radio(
     "Çalışma Modu",
     [
@@ -279,6 +314,7 @@ Geçmiş bakım ve arıza raporlarını (PDF, CSV, TXT) tarayarak kanıta dayal�
 > *"Fotoswitch I 1.7 kurmuyor, geçmişte nasıl çözülmüş?"* veya *"Raporun Pareto ve kronik arıza analizini çıkar."*
 
 Şimdi doğrudan arızanızı veya analiz isteğinizi yazarak devam edebilirsiniz."""
+
 # Yan menüde onaylı çözüm skorlarını göster
 feedback_items = load_feedback_data()
 if feedback_items:
@@ -286,7 +322,7 @@ if feedback_items:
         for item in sorted(feedback_items, key=lambda x: x["score"], reverse=True)[:5]:
             st.markdown(f"**+{item['score']}** — {item['query'][:60]}")
 
-if st.sidebar.button("🗑️ Sohbeti Temizle"):
+if st.sidebar.button("🗑️ Sohbeti Temizle", use_container_width=True):
     st.session_state.messages = []
     st.rerun()
 
@@ -315,6 +351,7 @@ if prompt := st.chat_input(input_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+
     # !help komutu yakalanırsa API'ye gitmeden anında yanıt ver ve normal akışı bozma
     if prompt.strip().lower() == "!help":
         with st.chat_message("assistant"):
@@ -323,9 +360,10 @@ if prompt := st.chat_input(input_placeholder):
             "role": "assistant",
             "content": HELP_TEXT,
             "is_help": True,
-
-    if "Mod B" in calisma_modu:
-        mod_kurali = """
+        })
+    else:
+        if "Mod B" in calisma_modu:
+            mod_kurali = """
 KESİN TALİMAT — SADECE MOD B (SAHA DESTEK / ARIZA ÇÖZÜM MODU) ÇALIŞTIR:
 1. Profildeki otomatik mod seçimini devre dışı bırak; SADECE Mod B kurallarını uygula.
 2. Genel rapor özeti veya Pareto (80/20) tablosu KESİNLİKLE YAPMA; yalnızca sorulan ekipman/arızaya odaklan.
@@ -335,70 +373,71 @@ KESİN TALİMAT — SADECE MOD B (SAHA DESTEK / ARIZA ÇÖZÜM MODU) ÇALIŞTIR:
    - **2. Kanıta Dayalı Saha Kontrol Adımları** (Önce +1 geri bildirimli doğrulanmış çözümler, ardından kayıtlardaki kalıcı işlemler)
    - **3. Kök Neden Özeti (5 Whys)** ([Kayıt Kanıtı], [Varsayım] ve [Saha Doğrulama Sorusu] etiketleriyle)
 """
-        user_payload = f"[AKTİF MOD: MOD B — SAHA DESTEK]\nKullanıcı Arıza Bildirimi: {prompt}"
-    else:
-        mod_kurali = """
+            user_payload = f"[AKTİF MOD: MOD B — SAHA DESTEK]\nKullanıcı Arıza Bildirimi: {prompt}"
+        else:
+            mod_kurali = """
 KESİN TALİMAT — SADECE MOD A (TOPLU RAPOR VE PARETO ANALİZİ) ÇALIŞTIR:
 1. Profildeki otomatik mod seçimini devre dışı bırak; SADECE Mod A kurallarını uygula.
 2. Boş veya yalnızca 'yapıldı/tamamlandı' yazan anlamsız iş emirlerini analizden hariç tut ve Veri Özeti bölümünde sayısını/oranını raporla.
 3. Yalnızca İnsan-Okur Türkçe rapor üret (JSON kesinlikle üretme); her bulgunun ve kümenin altına birebir kaynak alıntısı ekle.
 4. Raporu şu 5 başlıkta sun: Veri Özeti ve Güvenilirlik, Pareto (80/20) ve Kronik Arıza Tablosu, Öncelikli Kümeler İçin 5 Whys & 6M Fishbone, Geçmiş Aksiyonların Etkinlik Karnesi, Saha Doğrulama Soruları.
 """
-        user_payload = f"[AKTİF MOD: MOD A — TOPLU RAPOR ANALİZİ]\nKullanıcı İsteği: {prompt}"
+            user_payload = f"[AKTİF MOD: MOD A — TOPLU RAPOR ANALİZİ]\nKullanıcı İsteği: {prompt}"
 
-    feedback_context = build_feedback_priority_context()
-    final_instruction = mod_kurali
-    if feedback_context:
-        final_instruction += "\n\n---\n" + feedback_context
-    final_instruction += "\n\n---\nREFERANS PROFİL:\n" + system_instruction_text
-    contents = [user_payload]
-    if "remote_file" in st.session_state:
-        contents.append(st.session_state.remote_file)
+        feedback_context = build_feedback_priority_context()
+        final_instruction = mod_kurali
+        if feedback_context:
+            final_instruction += "\n\n---\n" + feedback_context
+        final_instruction += "\n\n---\nREFERANS PROFİL:\n" + system_instruction_text
 
-    with st.chat_message("assistant"):
-        placeholder = st.empty()
-        config = types.GenerateContentConfig(
-            system_instruction=final_instruction,
-            temperature=0.2,
-        )
+        contents = [user_payload]
+        if "remote_file" in st.session_state:
+            contents.append(st.session_state.remote_file)
 
-        fallback_models = list(dict.fromkeys([model_name, "gemini-2.5-flash", "gemini-2.0-flash"]))
-        last_error = None
-        success = False
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            config = types.GenerateContentConfig(
+                system_instruction=final_instruction,
+                temperature=0.2,
+            )
 
-        for current_model in fallback_models:
-            for attempt in range(2):
-                try:
-                    full_response = ""
-                    stream = client.models.generate_content_stream(
-                        model=current_model,
-                        contents=contents,
-                        config=config,
-                    )
-                    for chunk in stream:
-                        if chunk.text:
-                            full_response += chunk.text
-                            placeholder.markdown(full_response + "▌")
-                    placeholder.markdown(full_response)
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": full_response,
-                        "related_query": prompt,
-                        "feedback_given": False,
-                    })
-                    success = True
-                    break
-                except Exception as e:
-                    last_error = e
-                    err_str = str(e)
-                    if "429" in err_str or "503" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                        time.sleep(2)
-                    else:
+            fallback_models = list(dict.fromkeys([model_name] + ACTIVE_FALLBACK_MODELS))
+            last_error = None
+            success = False
+
+            for current_model in fallback_models:
+                for attempt in range(2):
+                    try:
+                        full_response = ""
+                        stream = client.models.generate_content_stream(
+                            model=current_model,
+                            contents=contents,
+                            config=config,
+                        )
+                        for chunk in stream:
+                            if chunk.text:
+                                full_response += chunk.text
+                                placeholder.markdown(full_response + "▌")
+                        placeholder.markdown(full_response)
+                        st.session_state.messages.append({
+                            "role": "assistant",
+                            "content": full_response,
+                            "related_query": prompt,
+                            "feedback_given": False,
+                        })
+                        success = True
                         break
-            if success:
-                break
+                    except Exception as e:
+                        last_error = e
+                        err_str = str(e)
+                        if "429" in err_str or "503" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                            time.sleep(2)
+                        else:
+                            break
+                if success:
+                    break
 
-        if success:
-            st.rerun()
-        else:
-            st.error(f"Yanıt oluşturulamadı: {last_error}")
+            if success:
+                st.rerun()
+            else:
+                st.error(f"Yanıt oluşturulamadı: {last_error}")
