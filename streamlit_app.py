@@ -13,13 +13,37 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FEEDBACK_FILE = os.path.join(BASE_DIR, "feedback_scores.json")
 
 
-# 1. YAML Profilini Güvenli Yükle
+# 1. YAML veya MD Profilini Otomatik Bul ve Yükle
 @st.cache_data
-def load_profile_text(file_name):
-    file_path = os.path.join(BASE_DIR, file_name.strip())
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    return yaml.dump(data, allow_unicode=True, sort_keys=False)
+def load_profile_text(preferred_name):
+    files_in_dir = os.listdir(BASE_DIR)
+
+    # 1) Tam eşleşme veya baş/son boşluklu eşleşme
+    for fname in files_in_dir:
+        if fname.strip() == preferred_name.strip():
+            target = os.path.join(BASE_DIR, fname)
+            with open(target, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            return yaml.dump(data, allow_unicode=True, sort_keys=False)
+
+    # 2) Dify dışındaki herhangi bir .yml / .yaml profil dosyasını bul
+    for fname in files_in_dir:
+        low = fname.lower().strip()
+        if low.endswith((".yml", ".yaml")) and "dify" not in low:
+            target = os.path.join(BASE_DIR, fname)
+            with open(target, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            return yaml.dump(data, allow_unicode=True, sort_keys=False)
+
+    # 3) Yedek olarak .md profil dosyasını oku
+    for fname in files_in_dir:
+        if fname.lower().strip().endswith(".md"):
+            target = os.path.join(BASE_DIR, fname)
+            with open(target, "r", encoding="utf-8") as f:
+                return f.read()
+
+    st.error(f"Profil dosyası bulunamadı. Klasördeki mevcut dosyalar: {files_in_dir}")
+    st.stop()
 
 
 system_instruction_text = load_profile_text("3_asitleme_kok_neden_analizi_profili.yml")
