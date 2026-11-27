@@ -210,4 +210,54 @@ KESİN TALİMAT — SADECE MOD B (SAHA ARIZA ÇÖZÜM MODU) ÇALIŞTIR:
         final_instruction += "\n\n---\n" + feedback_context
     final_instruction += "\n\n---\nREFERANS PROFİL:\n" + system_instruction_text
 
-    contents = [user
+ contents = [user_payload]
+    if "remote_file" in st.session_state:
+        contents.append(st.session_state.remote_file)
+
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        config = types.GenerateContentConfig(
+            system_instruction=final_instruction,
+            temperature=0.2,
+        )
+
+        fallback_models = list(dict.fromkeys([model_name, "gemini-2.5-flash", "gemini-2.0-flash"]))
+        last_error = None
+        success = False
+
+        for current_model in fallback_models:
+            for attempt in range(2):
+                try:
+                    full_response = ""
+                    stream = client.models.generate_content_stream(
+                        model=current_model,
+                        contents=contents,
+                        config=config,
+                    )
+                    for chunk in stream:
+                        if chunk.text:
+                            full_response += chunk.text
+                            placeholder.markdown(full_response + "▌")
+                    placeholder.markdown(full_response)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": full_response,
+                        "related_query": prompt,
+                        "feedback_given": False,
+                    })
+                    success = True
+                    break
+                except Exception as e:
+                    last_error = e
+                    err_str = str(e)
+                    if "429" in err_str or "503" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        time.sleep(2)
+                    else:
+                        break
+            if success:
+                break
+
+        if success:
+            st.rerun()
+        else:
+            st.error(f"Yanıt oluşturulamadı: {last_error}")
