@@ -248,6 +248,7 @@ else:
 
 # 5. Çalışma Modu Seçici (Varsayılan: Sadece Sorulan Arızanın Çözümü)
 # 5. Çalışma Modu Seçici (Açık Mod Etiketleri ve Dinamik Açıklama)
+# 5. Çalışma Modu Seçici (Açık Mod Etiketleri ve Dinamik Placeholder)
 calisma_modu = st.sidebar.radio(
     "Çalışma Modu",
     [
@@ -259,11 +260,25 @@ calisma_modu = st.sidebar.radio(
 
 if "Mod B" in calisma_modu:
     st.sidebar.caption("Sahadaki tek bir arızayı geçmiş kayıtlarla eşleştirir ve kanıtlı çözüm/kontrol soruları üretir.")
-    input_placeholder = "Sahadaki arızayı yazın (örn. Fotoswitch I 1.7 kurmuyor)..."
+    input_placeholder = "Sahadaki arızayı yazın (örn. Fotoswitch I 1.7 kurmuyor) veya neler yapabildiğimi görmek için !help yazın..."
 else:
     st.sidebar.caption("Yüklenen tüm raporu tarar; boş iş emirlerini eler, Pareto (80/20) ve kronik arıza raporu çıkarır.")
-    input_placeholder = "Toplu analiz için komut yazın (örn. Raporun Pareto ve kronik arıza analizini çıkar)..."
+    input_placeholder = "Toplu analiz komutu yazın (örn. Pareto analizi çıkar) veya neler yapabildiğimi görmek için !help yazın..."
 
+HELP_TEXT = """### 🤖 Otomasyon RAG Chatbot — Neler Yapabilirim?
+
+Geçmiş bakım ve arıza raporlarını (PDF, CSV, TXT) tarayarak kanıta dayalı arıza teşhisi ve kök neden analizi yaparım:
+
+* **🔧 Mod B — Saha Arıza Çözümü:** Sahada yaşadığınız arızayı (ekipman, semptom veya hata kodu) yazdığınızda yalnızca ilgili geçmiş kayıtları bulur, önceki müdahalelerin geçici/kalıcı durumunu çıkarır ve saha kontrol adımları sunarım.
+* **📊 Mod A — Toplu Rapor / Pareto Analizi:** Yüklediğiniz raporun tamamını tarar; boş veya sadece *"yapıldı/tamamlandı"* yazan iş emirlerini ayıklar, duruşların %80'ini oluşturan kritik kümeleri (Pareto) ve kronik arızaları (*Bad Actor*) listelerim.
+* **🔍 5 Whys & 6M Fishbone:** Arızaları teknik ve süreçsel olarak iki katmanda derinleştirir, Makine/Metot/Ölçüm/İnsan/Malzeme/Ortam başlıklarında sınıflandırırım.
+* **🛡️ Sıfır Halüsinasyon & Zorunlu Kaynak:** Raporda olmayan hiçbir tamir önerisini uydurmam; her bulgunun altına sayfa, arıza no ve birebir alıntı eklerim.
+* **⭐ +1 Geri Bildirim Önceliklendirme:** İşinize yarayan çözümlerin altındaki **👍 (+1)** butonuna bastığınızda o çözümü gelecek aramalarda üst sırada önceliklendiririm.
+
+**Örnek kullanım:**
+> *"Fotoswitch I 1.7 kurmuyor, geçmişte nasıl çözülmüş?"* veya *"Raporun Pareto ve kronik arıza analizini çıkar."*
+
+Şimdi doğrudan arızanızı veya analiz isteğinizi yazarak devam edebilirsiniz."""
 # Yan menüde onaylı çözüm skorlarını göster
 feedback_items = load_feedback_data()
 if feedback_items:
@@ -275,6 +290,7 @@ if st.sidebar.button("🗑️ Sohbeti Temizle"):
     st.session_state.messages = []
     st.rerun()
 
+
 # 6. Sohbet Geçmişi ve +1 Geri Bildirim Butonu
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -282,7 +298,7 @@ if "messages" not in st.session_state:
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if msg["role"] == "assistant":
+        if msg["role"] == "assistant" and not msg.get("is_help"):
             if msg.get("feedback_given"):
                 st.caption(f"✅ Geri bildirim kaydedildi (Güncel skor: +{msg.get('feedback_score', 1)})")
             else:
@@ -293,12 +309,20 @@ for idx, msg in enumerate(st.session_state.messages):
                     st.session_state.messages[idx]["feedback_score"] = new_score
                     st.rerun()
 
-# 7. Kullanıcı Mesajı ve Yanıt
+
 # 7. Kullanıcı Mesajı ve Yanıt
 if prompt := st.chat_input(input_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+    # !help komutu yakalanırsa API'ye gitmeden anında yanıt ver ve normal akışı bozma
+    if prompt.strip().lower() == "!help":
+        with st.chat_message("assistant"):
+            st.markdown(HELP_TEXT)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": HELP_TEXT,
+            "is_help": True,
 
     if "Mod B" in calisma_modu:
         mod_kurali = """
