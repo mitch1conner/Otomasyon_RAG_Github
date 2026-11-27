@@ -15,7 +15,7 @@ def load_profile_text(file_path):
         data = yaml.safe_load(f)
     return yaml.dump(data, allow_unicode=True, sort_keys=False)
 
-system_instruction_text = load_profile_text("3_asitleme_kok_neden_analizi_profili.yml")
+system_instruction_text = load_profile_text("3_asitleme_kok_neden_analizi_profili.yml ")
 
 # 2. API Anahtarını Önce Secrets'tan Al, Yoksa Yan Menüden İste
 api_key = None
