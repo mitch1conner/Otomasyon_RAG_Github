@@ -364,16 +364,27 @@ if prompt := st.chat_input(input_placeholder):
     else:
         if "Mod B" in calisma_modu:
             mod_kurali = """
-KESİN TALİMAT — SADECE MOD B (SAHA DESTEK / ARIZA ÇÖZÜM MODU) ÇALIŞTIR:
-1. Profildeki otomatik mod seçimini devre dışı bırak; SADECE Mod B kurallarını uygula.
-2. Genel rapor özeti veya Pareto (80/20) tablosu KESİNLİKLE YAPMA; yalnızca sorulan ekipman/arızaya odaklan.
-3. Dokümanda geçmeyen hiçbir tamir önerisini uydurma; her bulgunun altına birebir kaynak alıntısı ekle.
-4. Yanıtını SADECE şu 3 başlıkta ver:
-   - **1. Eşleşen Geçmiş Kayıtlar ve Yapılan Müdahaleler** (Tarih/Arıza No, geçici/kalıcı durumu ve birebir alıntı)
-   - **2. Kanıta Dayalı Saha Kontrol Adımları** (Önce +1 geri bildirimli doğrulanmış çözümler, ardından kayıtlardaki kalıcı işlemler)
-   - **3. Kök Neden Özeti (5 Whys)** ([Kayıt Kanıtı], [Varsayım] ve [Saha Doğrulama Sorusu] etiketleriyle)
+KESİN TALİMAT — SADECE MOD B (SADE VE KANITLI SAHA ÇÖZÜM MODU):
+1. Profildeki uzun rapor, 6M Fishbone, Pareto ve çok katmanlı 5 Whys şablonlarını DEVRE DIŞI BIRAK. Sadece bu talimattaki kısa formatı uygula.
+2. Giriş/kapanış cümlesi, genel yorum veya sorulmayan ekipmanlardan bahis KESİNLİKLE YASAKTIR.
+3. Dokümanda doğrudan geçmeyen hiçbir tamir adımı, parça değişimi veya ayar önerisi UYDURMA.
+4. En fazla 5 çözüm adımı yaz; her adım maksimum 1-2 kısa cümle olsun ve tekrar eden kayıtları tek maddede birleştir.
+5. Öncelik sırası: (a) +1 geri bildirim skoru olan doğrulanmış çözümler, (b) geçmişte kalıcı çözüm sağlamış kayıtlar, (c) geçici müdahaleler (mutlaka 'Geçici' uyarısıyla).
+
+YANIT FORMATI (SADECE BU 2 BAŞLIĞI KULLAN):
+
+**1. Kanıtlı Çözüm Adımları**
+Her adımı şu şablonda ver:
+1. **[Kısa ve net işlem]** *(Kalıcı / Geçici / +1 Onaylı)* — Tek cümlelik uygulama detayı.
+   > Kaynak: [Sayfa X | Arıza No: Y | Tarih: Z] — "rapordan en fazla 15 kelimelik birebir alıntı"
+
+*(Eğer dokümanda bu arızayla eşleşen kayıt yoksa yalnızca: "Yüklenen raporda bu arızaya ait doğrulanmış kayıt bulunmamaktadır." yaz.)*
+
+**2. Kök Neden & Eksik Kontrol (Sadece Gerekirse)**
+* **Muhtemel Kök Neden:** [Kayıt Kanıtı] veya [Varsayım] etiketiyle tek satırlık özet.
+* **[Saha Doğrulama Sorusu]:** Rapordaki bilginin yetmediği noktada en fazla 2-3 kısa kontrol sorusu.
 """
-            user_payload = f"[AKTİF MOD: MOD B — SAHA DESTEK]\nKullanıcı Arıza Bildirimi: {prompt}"
+            user_payload = f"[AKTİF MOD: MOD B — SADE VE KANITLI ÇÖZÜM]\nArıza: {prompt}"
         else:
             mod_kurali = """
 KESİN TALİMAT — SADECE MOD A (TOPLU RAPOR VE PARETO ANALİZİ) ÇALIŞTIR:
