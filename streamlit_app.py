@@ -148,33 +148,121 @@ else:
 
 model_name = st.sidebar.selectbox("Model Seçin", available_models, index=default_idx)
 
-# 4. Dosya Yükleme (PDF, CSV, TXT)
-uploaded_file = st.sidebar.file_uploader(
-    "Analiz Edilecek Raporu Yükleyin (PDF, CSV, TXT)",
-    type=["pdf", "csv", "txt"]
-)
+# 4. Kalıcı Dosya Yönetimi (Tek Sefer Yükle, İstenince Sil)
+UPLOAD_DIR = os.path.join(BASE_DIR, "saved_docs")
+META_FILE = os.path.join(UPLOAD_DIR, "active_file_meta.json")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-if uploaded_file and st.session_state.get("uploaded_file_name") != uploaded_file.name:
-    temp_path = os.path.join(BASE_DIR, f"temp_{uploaded_file.name}")
-    with open(temp_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    with st.spinner("Dosya Gemini'ye aktarılıyor..."):
+
+def get_saved_file_meta():
+    if os.path.exists(META_FILE):
         try:
-            st.session_state.remote_file = client.files.upload(file=temp_path)
-            st.session_state.uploaded_file_name = uploaded_file.name
-            st.sidebar.success(f"Dosya bağlandı: {uploaded_file.name}")
-        except Exception as e:
-            st.sidebar.error(f"Dosya yükleme hatası: {e}")
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            with open(META_FILE, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if os.path.exists(meta.get("local_path", "")):
+                return meta
+        except Exception:
+            pass
+    return None
+
+
+def save_file_meta(meta):
+    with open(META_FILE, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def ensure_gemini_file_ready(_client, meta):
+    """Gemini'deki dosya hâlâ aktifse onu döndürür; 48 saat dolmuşsa yerelden yeniden yükler."""
+    gemini_name = meta.get("gemini_name")
+    if gemini_name:
+        try:
+            return _client.files.get(name=gemini_name)
+        except Exception:
+            pass
+
+    # Süresi dolmuşsa veya bulunamadıysa yerel kopyadan sessizce yeniden yükle
+    remote_obj = _client.files.upload(file=meta["local_path"])
+    meta["gemini_name"] = remote_obj.name
+    save_file_meta(meta)
+    return remote_obj
+
+
+def delete_active_file(_client):
+    meta = get_saved_file_meta()
+    if meta:
+        if meta.get("gemini_name"):
+            try:
+                _client.files.delete(name=meta["gemini_name"])
+            except Exception:
+                pass
+        if os.path.exists(meta.get("local_path", "")):
+            os.remove(meta["local_path"])
+    if os.path.exists(META_FILE):
+        os.remove(META_FILE)
+    st.session_state.pop("remote_file", None)
+    st.session_state.pop("uploaded_file_name", None)
+
+
+st.sidebar.subheader("📁 Aktif Bakım Raporu")
+active_meta = get_saved_file_meta()
+
+if active_meta:
+    # Sayfa yenilendiyse session_state'i otomatik geri yükle
+    if "remote_file" not in st.session_state or st.session_state.get("uploaded_file_name") != active_meta["file_name"]:
+        with st.spinner("Kayıtlı rapor bağlanıyor..."):
+            try:
+                st.session_state.remote_file = ensure_gemini_file_ready(client, active_meta)
+                st.session_state.uploaded_file_name = active_meta["file_name"]
+            except Exception as e:
+                st.sidebar.error(f"Kayıtlı dosya bağlanamadı: {e}")
+
+    st.sidebar.success(f"Aktif Dosya: **{active_meta['file_name']}**")
+    if st.sidebar.button("🗑️ Aktif Dosyayı Sil", use_container_width=True):
+        delete_active_file(client)
+        st.rerun()
+else:
+    uploaded_file = st.sidebar.file_uploader(
+        "Analiz Edilecek Raporu Yükleyin (PDF, CSV, TXT)",
+        type=["pdf", "csv", "txt"]
+    )
+    if uploaded_file:
+        local_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
+        with open(local_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        with st.spinner("Dosya kaydediliyor ve Gemini'ye aktarılıyor..."):
+            try:
+                remote_obj = client.files.upload(file=local_path)
+                meta = {
+                    "file_name": uploaded_file.name,
+                    "local_path": local_path,
+                    "gemini_name": remote_obj.name,
+                }
+                save_file_meta(meta)
+                st.session_state.remote_file = remote_obj
+                st.session_state.uploaded_file_name = uploaded_file.name
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Dosya yükleme hatası: {e}")
+                if os.path.exists(local_path):
+                    os.remove(local_path)
 
 # 5. Çalışma Modu Seçici (Varsayılan: Sadece Sorulan Arızanın Çözümü)
+# 5. Çalışma Modu Seçici (Açık Mod Etiketleri ve Dinamik Açıklama)
 calisma_modu = st.sidebar.radio(
     "Çalışma Modu",
-    ["🔧 Saha Arıza Çözümü (Varsayılan)", "📊 Genel Rapor / Pareto Analizi"],
-    index=0
+    [
+        "🔧 Mod B — Saha Arıza Çözümü (Varsayılan)",
+        "📊 Mod A — Toplu Rapor / Pareto Analizi",
+    ],
+    index=0,
 )
+
+if "Mod B" in calisma_modu:
+    st.sidebar.caption("Sahadaki tek bir arızayı geçmiş kayıtlarla eşleştirir ve kanıtlı çözüm/kontrol soruları üretir.")
+    input_placeholder = "Sahadaki arızayı yazın (örn. Fotoswitch I 1.7 kurmuyor)..."
+else:
+    st.sidebar.caption("Yüklenen tüm raporu tarar; boş iş emirlerini eler, Pareto (80/20) ve kronik arıza raporu çıkarır.")
+    input_placeholder = "Toplu analiz için komut yazın (örn. Raporun Pareto ve kronik arıza analizini çıkar)..."
 
 # Yan menüde onaylı çözüm skorlarını göster
 feedback_items = load_feedback_data()
@@ -206,27 +294,33 @@ for idx, msg in enumerate(st.session_state.messages):
                     st.rerun()
 
 # 7. Kullanıcı Mesajı ve Yanıt
-if prompt := st.chat_input("Sahadaki arızayı yazın (örn. Kalınlık ölçme çalışmıyor)..."):
+# 7. Kullanıcı Mesajı ve Yanıt
+if prompt := st.chat_input(input_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if calisma_modu.startswith("🔧"):
+    if "Mod B" in calisma_modu:
         mod_kurali = """
-KESİN TALİMAT — SADECE MOD B (SAHA ARIZA ÇÖZÜM MODU) ÇALIŞTIR:
-1. Kullanıcı sahada yaşadığı spesifik bir arızayı soruyor. Genel rapor özeti, veri güvenilirliği, Pareto (80/20) tablosu KESİNLİKLE YAPMA.
-2. Kullanıcının sorduğu ekipman/arıza dışındaki alakasız ekipmanlardan (ör. Kalınlık ölçme sorulduysa Absocoder, EPC, Kantar vb.) KESİNLİKLE BAHSETME.
-3. Yüklenen PDF içinden SADECE kullanıcının yazdığı arıza ve eş anlamlılarıyla (ör. Kalınlık Ölçme -> X-Ray, open beam, shutter, chiller, HV OFF, JB-3 vb.) ilgili geçmiş kayıtları bul ve filtrele.
-4. Dokümanda geçmeyen hiçbir tamir önerisini uydurma; her bulgunun altına birebir kaynak alıntısı ekle.
-5. Yanıtını SADECE şu 3 başlıkta, net ve sahada uygulanabilir şekilde ver:
-  - **1. PDF'te Eşleşen Geçmiş Kayıtlar ve Yapılan Çözümler:** Eşleşen her kayıt için Tarih/Arıza No, arıza detayı, sahada yapılan müdahale, geçici/kalıcı durumu ve PDF'ten kısa birebir alıntı.
-  - **2. Sahada Hemen Uygulanacak Çözüm Adımları:** Önce geri bildirim skoru (+1) yüksek doğrulanmış çözümlerden ve geçmişte en sık işe yarayan kayıtlardan başlayarak teknisyenin sahada uygulayacağı somut kontrol/çözüm listesi.
-  - **3. Kök Neden Özeti (Sadece Bu Arıza İçin):** [Kayıt Kanıtı], [Varsayım] ve [Saha Doğrulama Sorusu] etiketleriyle kısa 5 Whys ve kalıcı önlem.
+KESİN TALİMAT — SADECE MOD B (SAHA DESTEK / ARIZA ÇÖZÜM MODU) ÇALIŞTIR:
+1. Profildeki otomatik mod seçimini devre dışı bırak; SADECE Mod B kurallarını uygula.
+2. Genel rapor özeti veya Pareto (80/20) tablosu KESİNLİKLE YAPMA; yalnızca sorulan ekipman/arızaya odaklan.
+3. Dokümanda geçmeyen hiçbir tamir önerisini uydurma; her bulgunun altına birebir kaynak alıntısı ekle.
+4. Yanıtını SADECE şu 3 başlıkta ver:
+   - **1. Eşleşen Geçmiş Kayıtlar ve Yapılan Müdahaleler** (Tarih/Arıza No, geçici/kalıcı durumu ve birebir alıntı)
+   - **2. Kanıta Dayalı Saha Kontrol Adımları** (Önce +1 geri bildirimli doğrulanmış çözümler, ardından kayıtlardaki kalıcı işlemler)
+   - **3. Kök Neden Özeti (5 Whys)** ([Kayıt Kanıtı], [Varsayım] ve [Saha Doğrulama Sorusu] etiketleriyle)
 """
-        user_payload = f"[AKTİF MOD: SAHA ARIZA ÇÖZÜMÜ — SADECE BU ARIZAYA ODAKLAN]\nKullanıcı Arıza Bildirimi: {prompt}"
+        user_payload = f"[AKTİF MOD: MOD B — SAHA DESTEK]\nKullanıcı Arıza Bildirimi: {prompt}"
     else:
-        mod_kurali = "KESİN TALİMAT: Sadece MOD A (Toplu Rapor ve Pareto Analizi) çalıştır."
-        user_payload = prompt
+        mod_kurali = """
+KESİN TALİMAT — SADECE MOD A (TOPLU RAPOR VE PARETO ANALİZİ) ÇALIŞTIR:
+1. Profildeki otomatik mod seçimini devre dışı bırak; SADECE Mod A kurallarını uygula.
+2. Boş veya yalnızca 'yapıldı/tamamlandı' yazan anlamsız iş emirlerini analizden hariç tut ve Veri Özeti bölümünde sayısını/oranını raporla.
+3. Yalnızca İnsan-Okur Türkçe rapor üret (JSON kesinlikle üretme); her bulgunun ve kümenin altına birebir kaynak alıntısı ekle.
+4. Raporu şu 5 başlıkta sun: Veri Özeti ve Güvenilirlik, Pareto (80/20) ve Kronik Arıza Tablosu, Öncelikli Kümeler İçin 5 Whys & 6M Fishbone, Geçmiş Aksiyonların Etkinlik Karnesi, Saha Doğrulama Soruları.
+"""
+        user_payload = f"[AKTİF MOD: MOD A — TOPLU RAPOR ANALİZİ]\nKullanıcı İsteği: {prompt}"
 
     feedback_context = build_feedback_priority_context()
     final_instruction = mod_kurali
